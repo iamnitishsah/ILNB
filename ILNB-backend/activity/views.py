@@ -31,6 +31,6 @@ class TopTradedAssetsView(APIView):
             TradeActivity.objects
             .values('asset_name')
             .annotate(trade_count=Count('id'))
-            .order_by('-trade_count')[:5]
+            .order_by('-trade_count')[:3]
         )
         return Response(top_assets)

@@ -392,15 +392,15 @@ class Trade_News(APIView):
 
         for ticker in tickers:
             try:
+                art = {}
                 # Search for news related to the ticker
                 search_result = yf.Search(ticker, max_results=10, news_count=10, include_research=True)
                 news_data = search_result.news
 
-                ticker_articles = []
-
                 # Process each article
-                for article_info in news_data[:3]:  # Limit to 3 articles per ticker
+                for article_info in news_data:  # Limit to 3 articles per ticker
                     try:
+
                         article = Article(article_info['link'])
                         article.download()
                         article.parse()
@@ -409,25 +409,17 @@ class Trade_News(APIView):
                         if len(article.text.strip()) >= 500:
                             summary = self.generate_text(article.text[:4000])  # Limit text length for API
 
-                            ticker_articles.append({
-                                'title': article_info['title'],
-                                'publisher': article_info.get('publisher', 'Unknown'),
-                                'link': article_info['link'],
-                                'published': article_info.get('providerPublishTime', ''),
-                                'summary': summary
-                            })
+                            art['title'] = article.title
+                            art['summary'] = summary
+                            articles[ticker] = art
+                            break
 
-                            if len(ticker_articles) >= 2:  # Limit to 2 articles per ticker
-                                break
+
 
                     except Exception as e:
                         logger.warning(f"Error processing article for {ticker}: {str(e)}")
                         continue
 
-                if ticker_articles:
-                    articles[ticker] = ticker_articles
-                else:
-                    articles[ticker] = [{"info": "No substantial news articles found for this ticker"}]
 
             except Exception as e:
                 logger.error(f"Error fetching news for {ticker}: {str(e)}")
