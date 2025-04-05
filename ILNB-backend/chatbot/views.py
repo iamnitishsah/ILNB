@@ -17,7 +17,23 @@ import json
 import traceback
 import logging
 
+from django.shortcuts import render
+from django.http import JsonResponse
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from newspaper import Article
+import yfinance as yf
+import os
+import logging
+import traceback
+from google import genai
+from dotenv import load_dotenv
+from activity.views import TopTradedAssetsView
+
+load_dotenv()
 logger = logging.getLogger(__name__)
+
 
 
 class Bot_Response(APIView):
@@ -270,3 +286,151 @@ class Bot_Response(APIView):
                 "ticker": ticker,
                 "error": f"Failed to analyze stock: {str(e)}"
             }
+
+
+
+
+class Trade_News(APIView):
+    """
+    API view for fetching and summarizing financial news for top traded stock tickers
+    """
+
+    def get(self, request):
+        """
+        Handle GET requests with optional ticker parameters
+        If no tickers provided, uses top traded assets from activity app
+
+        Example usage:
+        - With specific tickers: /api/chatbot/news/?tickers=AAPL,MSFT,GOOG
+        - For top traded assets: /api/chatbot/news/
+        """
+        try:
+            # Get tickers from query params if provided
+            ticker_param = request.query_params.get('tickers', '')
+
+            if ticker_param:
+                # Use provided tickers
+                tickers = ticker_param.split(',')
+                source = 'user_specified'
+            else:
+                # Get top traded assets from the activity app
+                try:
+                    # Create instance of TopTradedAssetsView to get data
+                    top_assets_view = TopTradedAssetsView()
+                    top_assets_response = top_assets_view.get(request)
+                    top_assets_data = top_assets_response.data
+
+                    # Extract ticker symbols from top assets data
+                    tickers = [asset['asset_name'] for asset in top_assets_data]
+                    source = 'top_traded'
+
+                    # If no top assets found, use default tickers
+                    if not tickers:
+                        tickers = ['AAPL', 'MSFT', 'GOOG', 'AMZN', 'TSLA']
+                        source = 'default'
+
+                except Exception as e:
+                    logger.error(f"Error fetching top assets: {str(e)}")
+                    # Fall back to default tickers
+                    tickers = ['AAPL', 'MSFT', 'GOOG', 'AMZN', 'TSLA']
+                    source = 'default (after error)'
+
+            # Limit number of tickers to prevent abuse
+            tickers = tickers[:5]
+
+            # Fetch news for the tickers
+            news_data = self.get_news(tickers)
+
+            return Response({
+                "status": "success",
+                "source": source,
+                "tickers": tickers,
+                "data": news_data
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error in Trade_News API: {str(e)}")
+            logger.error(traceback.format_exc())
+            return Response({
+                "status": "error",
+                "message": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def generate_text(self, text):
+        """
+        Generate a summary of news article using Google's Gemini model
+        """
+        try:
+            # Get API key from environment variable
+            GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+            if not GEMINI_API_KEY:
+                return "API key not found. Please set the GEMINI_API_KEY environment variable."
+
+            # Configure the Gemini client
+            client = genai.Client(api_key=GEMINI_API_KEY)
+
+            # Create prompt for summarization
+            prompt = f"You are a finance expert. Please provide a summary of following news: {text} generate summary give complete text only"
+
+            # Generate the summary
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[prompt]
+            )
+
+            return response.text
+
+        except Exception as e:
+            logger.error(f"Error generating summary: {str(e)}")
+            return f"Unable to generate summary: {str(e)}"
+
+    def get_news(self, tickers):
+        """
+        Fetch news articles for a list of ticker symbols
+        """
+        articles = {}
+
+        for ticker in tickers:
+            try:
+                # Search for news related to the ticker
+                search_result = yf.Search(ticker, max_results=10, news_count=10, include_research=True)
+                news_data = search_result.news
+
+                ticker_articles = []
+
+                # Process each article
+                for article_info in news_data[:3]:  # Limit to 3 articles per ticker
+                    try:
+                        article = Article(article_info['link'])
+                        article.download()
+                        article.parse()
+
+                        # Only process substantial articles
+                        if len(article.text.strip()) >= 500:
+                            summary = self.generate_text(article.text[:4000])  # Limit text length for API
+
+                            ticker_articles.append({
+                                'title': article_info['title'],
+                                'publisher': article_info.get('publisher', 'Unknown'),
+                                'link': article_info['link'],
+                                'published': article_info.get('providerPublishTime', ''),
+                                'summary': summary
+                            })
+
+                            if len(ticker_articles) >= 2:  # Limit to 2 articles per ticker
+                                break
+
+                    except Exception as e:
+                        logger.warning(f"Error processing article for {ticker}: {str(e)}")
+                        continue
+
+                if ticker_articles:
+                    articles[ticker] = ticker_articles
+                else:
+                    articles[ticker] = [{"info": "No substantial news articles found for this ticker"}]
+
+            except Exception as e:
+                logger.error(f"Error fetching news for {ticker}: {str(e)}")
+                articles[ticker] = [{"error": f"Failed to fetch news: {str(e)}"}]
+
+        return articles
