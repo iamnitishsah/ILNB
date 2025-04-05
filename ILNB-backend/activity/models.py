@@ -27,7 +27,7 @@ class TradeActivity(models.Model):
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     trade_type = models.CharField(max_length=4, choices=TRADE_TYPES)
-    asset_type = models.CharField(max_length=20, choices=ASSET_TYPE)  # Fixed this line
+    asset_type = models.CharField(max_length=20, choices=ASSET_TYPE)
     asset_name = models.CharField(max_length=100)
     quantity = models.DecimalField(max_digits=10, decimal_places=2)
     price = models.DecimalField(max_digits=15, decimal_places=2)
