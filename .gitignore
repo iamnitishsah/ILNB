@@ -175,5 +175,6 @@ cython_debug/
 
 ILNB-backend/.idea
 ILNB-frontend
+team-meta_cognition
 
 .DS_store
